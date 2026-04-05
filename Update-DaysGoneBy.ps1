@@ -13,7 +13,11 @@
     The operation to perform: Set, Add, Subtract, or SetDate.
 
 .PARAMETER Value
-    The number of days to use with Set, Add, or Subtract operations.
+    The number of units to use with Set, Add, or Subtract operations.
+
+.PARAMETER Unit
+    The time unit for Add/Subtract operations: Days (default), Weeks, or Months.
+    Months are calculated as calendar months relative to the current in-game date.
 
 .PARAMETER Date
     The in-game calendar date to set (yyyy-MM-dd). Used with the SetDate operation.
@@ -29,10 +33,13 @@
     .\Update-DaysGoneBy.ps1 save.sav -Operation Add -Value 30
 
 .EXAMPLE
-    .\Update-DaysGoneBy.ps1 save.sav -Operation SetDate -Date "3016-06-15"
+    .\Update-DaysGoneBy.ps1 save.sav -Operation Add -Value 2 -Unit Weeks
 
 .EXAMPLE
-    .\Update-DaysGoneBy.ps1 save.sav -Operation Subtract -Value 10
+    .\Update-DaysGoneBy.ps1 save.sav -Operation Subtract -Value 3 -Unit Months
+
+.EXAMPLE
+    .\Update-DaysGoneBy.ps1 save.sav -Operation SetDate -Date "3016-06-15"
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -46,6 +53,10 @@ param (
 
     [Parameter()]
     [int]$Value,
+
+    [Parameter()]
+    [ValidateSet('Days', 'Weeks', 'Months')]
+    [string]$Unit = 'Days',
 
     [Parameter()]
     [string]$Date
@@ -66,12 +77,12 @@ $EPOCH = [datetime]::new(3015, 5, 27)
 
 # The exact byte pattern that precedes the TotalTimeElapsed value.
 # Breakdown:
-#   11000000                         - Name length (17)
+#   11000000                           - Name length (17)
 #   546f74616c54696d65456c617073656400 - "TotalTimeElapsed\0"
-#   0c000000                         - Type name length (12)
-#   496e7450726f706572747900          - "IntProperty\0"
-#   04000000                         - Value size (4 bytes)
-#   00000000                         - Padding field
+#   0c000000                           - Type name length (12)
+#   496e7450726f706572747900           - "IntProperty\0"
+#   04000000                           - Value size (4 bytes)
+#   00000000                           - Padding field
 $PATTERN_HEX = '11000000546f74616c54696d65456c6170736564000c000000496e7450726f706572747900040000000000000000'
 $PATTERN_BYTES = [byte[]] ($PATTERN_HEX -replace '..', '0x$&,' -split ',' |
     Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) })
@@ -170,8 +181,41 @@ function Convert-DateToDays {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: Convert a unit/value offset to a day delta, given a current day
+# count as context (required for calendar-aware month arithmetic).
+# ---------------------------------------------------------------------------
+function Convert-UnitToDays {
+    param (
+        [int]$Amount,       # Signed: positive = forward, negative = backward
+        [string]$Unit,
+        [int]$CurrentDays   # Only used for Months; ignored for Days/Weeks
+    )
+
+    switch ($Unit) {
+        'Days'   { return $Amount }
+        'Weeks'  { return $Amount * 7 }
+        'Months' {
+            # Reconstruct the current in-game date as a shifted real DateTime,
+            # add the requested number of calendar months, then measure the
+            # resulting day delta. This correctly handles variable month lengths
+            # (e.g. adding 1 month to Jan 31 yields Feb 28/29, not Mar 2/3).
+            $base        = [datetime]::new(2015, 5, 27)
+            $currentReal = $base.AddDays($CurrentDays)
+            $targetReal  = $currentReal.AddMonths($Amount)
+            return ($targetReal - $currentReal).Days
+        }
+        default { throw "Unknown unit: '$Unit'" }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
+# -Unit is only meaningful for Add/Subtract; warn if supplied with others.
+if ($PSBoundParameters.ContainsKey('Unit') -and $Operation -notin 'Add', 'Subtract') {
+    Write-Warning "-Unit is only applicable to 'Add' and 'Subtract' operations and will be ignored."
+}
 
 # Resolve and verify the save file path
 $resolvedPath = Resolve-Path -LiteralPath $SaveFile -ErrorAction SilentlyContinue
@@ -266,8 +310,14 @@ Write-Host "  Current   : $currentDays days  ($currentDate)"
 # ---------------------------------------------------------------------------
 $newDays = switch ($Operation) {
     'Set'     { $Value }
-    'Add'     { $currentDays + $Value }
-    'Subtract'{ $currentDays - $Value }
+    'Add'     {
+        $delta = Convert-UnitToDays -Amount $Value -Unit $Unit -CurrentDays $currentDays
+        $currentDays + $delta
+    }
+    'Subtract' {
+        $delta = Convert-UnitToDays -Amount $Value -Unit $Unit -CurrentDays $currentDays
+        $currentDays - $delta
+    }
     'SetDate' { Convert-DateToDays -DateStr $Date }
 }
 
@@ -284,7 +334,15 @@ if ($newDays -gt $INT32_MAX) {
 
 $newDate = Convert-DaysToDate -Days $newDays
 
-Write-Host "  Operation : $Operation$(if ($Operation -in 'Set','Add','Subtract') { " $Value day(s)" } else { " ($Date)" })"
+# Build a readable description of the operation for the summary line
+$opDescription = switch ($Operation) {
+    'Set'      { "Set $Value day(s)" }
+    'Add'      { "Add $Value $Unit" }
+    'Subtract' { "Subtract $Value $Unit" }
+    'SetDate'  { "SetDate ($Date)" }
+}
+
+Write-Host "  Operation : $opDescription"
 Write-Host "  New Value : $newDays days  ($newDate)"
 Write-Host ""
 

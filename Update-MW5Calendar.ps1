@@ -77,12 +77,12 @@ $EPOCH = [datetime]::new(3015, 5, 27)
 
 # The exact byte pattern that precedes the TotalTimeElapsed value.
 # Breakdown:
-#   11000000                           - Name length (17)
+#   11000000                         - Name length (17)
 #   546f74616c54696d65456c617073656400 - "TotalTimeElapsed\0"
-#   0c000000                           - Type name length (12)
-#   496e7450726f706572747900           - "IntProperty\0"
-#   04000000                           - Value size (4 bytes)
-#   00000000                           - Padding field
+#   0c000000                         - Type name length (12)
+#   496e7450726f706572747900          - "IntProperty\0"
+#   04000000                         - Value size (4 bytes)
+#   00000000                         - Padding field
 $PATTERN_HEX = '11000000546f74616c54696d65456c6170736564000c000000496e7450726f706572747900040000000000000000'
 $PATTERN_BYTES = [byte[]] ($PATTERN_HEX -replace '..', '0x$&,' -split ',' |
     Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) })
@@ -190,6 +190,7 @@ function Convert-UnitToDays {
         [string]$Unit,
         [int]$CurrentDays   # Only used for Months; ignored for Days/Weeks
     )
+    $VerbosePreference = $script:VerbosePreference
 
     switch ($Unit) {
         'Days'   { return $Amount }
@@ -315,8 +316,8 @@ $newDays = switch ($Operation) {
         $currentDays + $delta
     }
     'Subtract' {
-        $delta = Convert-UnitToDays -Amount $Value -Unit $Unit -CurrentDays $currentDays
-        $currentDays - $delta
+        $delta = Convert-UnitToDays -Amount (-$Value) -Unit $Unit -CurrentDays $currentDays
+        $currentDays + $delta
     }
     'SetDate' { Convert-DateToDays -DateStr $Date }
 }

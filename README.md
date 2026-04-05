@@ -13,6 +13,7 @@ This tool allows you to manipulate the `TotalTimeElapsed` value in MW5 save file
 - **Safe preview mode**: Use `-WhatIf` to see changes before writing
 - **Automatic clamping**: Prevents invalid negative values or integer overflows
 - **Calendar-aware**: Month calculations respect actual month lengths (28-31 days)
+- **Verbose output**: Debug mode with `-Verbose` for troubleshooting
 
 ## Requirements
 
@@ -119,6 +120,35 @@ Typical save file locations:
 ~/.steam/steam/steamapps/compatdata/784080/pfx/drive_c/users/steamuser/Local Settings/Application Data/MW5Mercs/Saved/SaveGames/
 ```
 
+## Technical Details
+
+### How It Works
+
+The script operates by:
+1. Locating the `TotalTimeElapsed` IntProperty in the binary save structure
+2. Reading the current 32-bit integer value (days since epoch)
+3. Calculating the new value based on the requested operation
+4. Writing the value back in little-endian format
+
+### Byte Pattern
+
+The script searches for this exact byte pattern (hex):
+```
+11 00 00 00 54 6F 74 61 6C 54 69 6D 65 45 6C 61 70 73 65 64 00
+0C 00 00 00 49 6E 74 50 72 6F 70 65 72 74 79 00
+04 00 00 00 00 00 00 00
+```
+
+**Pattern breakdown**:
+- `11 00 00 00` - Name length (17 bytes)
+- `54 6F 74 61 6C 54 69 6D 65 45 6C 61 70 73 65 64 00` - "TotalTimeElapsed\0"
+- `0C 00 00 00` - Type name length (12 bytes)
+- `49 6E 74 50 72 6F 70 65 72 74 79 00` - "IntProperty\0"
+- `04 00 00 00` - Value size (4 bytes)
+- `00 00 00 00` - Padding field
+
+The actual int32 value follows immediately after this pattern.
+
 ## Important Notes
 
 1. **Backup your saves** before using this tool
@@ -130,6 +160,7 @@ Typical save file locations:
    - Contract generation
 4. Setting dates too far in the past (before May 27, 3015) is automatically clamped to Day 0
 5. Extremely far future dates may exceed the game's internal limits (automatically clamped to 2,147,483,647 days)
+6. **Always close the game completely** before editing save files
 
 ## Troubleshooting
 
@@ -137,37 +168,59 @@ Typical save file locations:
 - Ensure the save file is uncompressed
 - The save may be from a different game version with a different format
 - Try loading and re-saving the game to ensure a standard format
+- Some mods may alter the save file structure
 
 ### "Save file not found" Error
 - Use absolute or relative paths correctly
 - The save file may have a different extension (`.sav` is typical)
 - Check file permissions
+- Ensure the path doesn't contain special characters that need escaping
 
 ### Changes Not Reflecting In-Game
-- Ensure the game is **completely closed** before editing
-- Some cloud save systems (Steam, Epic) may overwrite your changes
+- Ensure the game is **completely closed** before editing (not just minimized)
+- Some cloud save systems (Steam, Epic) may overwrite your changes - disable cloud sync temporarily
 - Verify you're editing the correct save file (check file timestamps)
+- Try loading a different save slot then back to verify
 
 ### Month Calculation Seems Off
 The script uses calendar months, not 30-day months. For example:
 - Jan 15 → Feb 15 (31 days later)
 - Jan 31 → Feb 28 (28 days later in non-leap year)
+- Mar 31 → Apr 30 (30 days later)
 
-This matches real-world calendar behavior but may differ from simplified game mechanics.
+This matches real-world calendar behavior and is consistent with how .NET's `AddMonths()` works.
 
-## Technical Details
+### Verbose Mode Output
+Run with `-Verbose` to see:
+- File size and pattern location
+- Byte offsets in decimal and hex
+- Raw value bytes being read
+- Delta calculations for month conversions
 
-The script works by:
-1. Locating the `TotalTimeElapsed` IntProperty in the binary save structure
-2. Reading the current 32-bit integer value (days since epoch)
-3. Calculating the new value based on the requested operation
-4. Writing the value back in little-endian format
+## Examples
 
-**Byte pattern** (hex):
+### Campaign Fast-Forward
+Skip 6 months ahead to access later-game content:
+```powershell
+.\Update-MW5Calendar.ps1 "MySave.sav" -Operation Add -Value 6 -Unit Months
 ```
-11 00 00 00 54 6F 74 61 6C 54 69 6D 65 45 6C 61 70 73 65 64 00
-0C 00 00 00 49 6E 74 50 72 6F 70 65 72 74 79 00
-04 00 00 00 00 00 00 00
+
+### Roll Back Time
+Go back 90 days if you missed a time-limited event:
+```powershell
+.\Update-MW5Calendar.ps1 "MySave.sav" -Operation Subtract -Value 90
+```
+
+### Set Exact Date
+Jump to a specific date for a known event:
+```powershell
+.\Update-MW5Calendar.ps1 "MySave.sav" -Operation SetDate -Date "3020-01-01"
+```
+
+### Preview Before Applying
+Always preview major changes first:
+```powershell
+.\Update-MW5Calendar.ps1 "MySave.sav" -Operation Add -Value 365 -WhatIf
 ```
 
 ## Contributing
@@ -178,6 +231,7 @@ Contributions are welcome! Areas for improvement:
 - Add interactive mode with date picker
 - Add validation for game version compatibility
 - Create GUI wrapper
+- Add support for other time-related properties
 
 ## License
 
@@ -191,6 +245,7 @@ This tool modifies game save files. While it has been tested, there's always a r
 
 - Piranha Games for creating MechWarrior 5: Mercenaries
 - The MW5 modding community for save file format documentation
+- .NET DateTime implementation for reliable calendar math
 
 ---
 
